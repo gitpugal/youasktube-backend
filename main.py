@@ -44,7 +44,8 @@ class ChatRequest(BaseModel):
 
 
 # --- Gemini Client Setup ---
-GEMINI_API_KEY= os.getenv("GEMINI_API_KEY")
+# GEMINI_API_KEY= os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY = "AIzaSyBmpK2B8-_bXLw4Fxl9WDat3G3SyELmFT4"
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable is not set.")
 
@@ -116,8 +117,12 @@ async def transcribe_youtube(request: TranscribeRequest):
     url = request.url.strip()
     try:
         logging.info(f"Downloading audio from: {url}")
-        yt = YouTube(f"https://www.youtube.com/watch?v={url}", use_po_token=True)
-
+        visitor_data = os.getenv("VISITOR_DATA")
+        yt = YouTube(
+            f"https://www.youtube.com/watch?v={url}",
+            use_po_token=True,
+            visitor_data=visitor_data,
+        )
         stream = yt.streams.filter(only_audio=True).first()
         if not stream:
             raise HTTPException(status_code=404, detail="No audio stream found.")
