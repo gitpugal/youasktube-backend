@@ -14,9 +14,10 @@ from google.genai import types
 app = FastAPI()
 
 # Enable CORS
+# Enable CORS - Only allow localhost
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost", "http://127.0.0.1"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,6 +71,7 @@ Guidelines:
 - Do not include any prefixes like "System:" or "User:".
 - Use general world knowledge when appropriate (e.g., speaker name, organization).
 - Use the transcript only when the question is about specific content in the video.
+- Always create the response in visually appealing markdown string format
 - If the question is unrelated to the video, politely mention that it's not covered in the video, but still answer it briefly based on general knowledge.
 
 Example response to an unrelated question:
@@ -114,7 +116,7 @@ async def transcribe_youtube(request: TranscribeRequest):
     url = request.url.strip()
     try:
         logging.info(f"Downloading audio from: {url}")
-        yt = YouTube(f"https://www.youtube.com/watch?v={url}")
+        yt = YouTube(f"https://www.youtube.com/watch?v={url}", use_po_token=True)
 
         stream = yt.streams.filter(only_audio=True).first()
         if not stream:
