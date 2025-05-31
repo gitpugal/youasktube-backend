@@ -1,11 +1,11 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from pytubefix import YouTube
 import whisper
 import os
 import uuid
 import logging
+import yt_dlp
 
 from google import genai
 from google.genai import types
@@ -14,7 +14,6 @@ from google.genai import types
 app = FastAPI()
 
 # Enable CORS
-# Enable CORS - Only allow localhost
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost", "http://127.0.0.1"],
@@ -32,7 +31,7 @@ whisper_model = whisper.load_model("tiny")
 logging.info("Model loaded.")
 
 
-# Define request models
+# --- Models ---
 class TranscribeRequest(BaseModel):
     url: str
 
@@ -43,16 +42,68 @@ class ChatRequest(BaseModel):
     title: str
 
 
-# --- Gemini Client Setup ---
-GEMINI_API_KEY= os.getenv("GEMINI_API_KEY")
+# --- Gemini Setup ---
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable is not set.")
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-gemini_model = "gemini-2.0-flash"
 
 
-# --- /chat Route using Gemini ---
+# --- Transcribe Route ---
+@app.post("/transcribe/")
+async def transcribe_youtube(request: TranscribeRequest):
+    video_id = request.url.strip()
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
+    base_filename = f"audio_{uuid.uuid4()}"
+    audio_filename = f"{base_filename}.mp3"
+
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": base_filename,
+        "quiet": True,
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }
+        ],
+        "noplaylist": True,
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",  # Important to avoid 403
+    }
+
+    try:
+        logging.info(f"Downloading audio from: {video_url}")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=True)
+            title = info.get("title", "")
+            description = info.get("description", "")
+
+        logging.info("Download complete. Starting transcription...")
+        result = whisper_model.transcribe(audio_filename)
+        logging.info("Transcription complete.")
+
+        os.remove(audio_filename)
+        logging.info("Temporary file removed.")
+
+        return {
+            "response": {
+                "title": title,
+                "description": description,
+                "video_content": result["text"],
+            }
+        }
+
+    except Exception as e:
+        logging.error(f"Error in /transcribe: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Error during transcription: {str(e)}"
+        )
+
+
+# --- Chat Route ---
 @app.post("/chat")
 async def chat_with_summary(request: ChatRequest):
     try:
@@ -66,12 +117,11 @@ Transcript:
 Answer the user's question as if you're explaining it to a friend.
 
 Guidelines:
-- Be casual and direct.
 - Don't mention you're an AI or refer to the transcript.
-- Do not include any prefixes like "System:" or "User:".
+- Do not include any prefixes like "System:" or "User:". 
 - Use general world knowledge when appropriate (e.g., speaker name, organization).
 - Use the transcript only when the question is about specific content in the video.
-- Always create the response in visually appealing markdown string format
+- Always create the response in visually appealing markdown string format.
 - If the question is unrelated to the video, politely mention that it's not covered in the video, but still answer it briefly based on general knowledge.
 
 Example response to an unrelated question:
@@ -84,11 +134,11 @@ Question: {userQuestion}
             summary=request.summary,
             userQuestion=request.userQuestion,
         )
-        print(full_prompt)
+
         contents = [
             types.Content(
                 role="user",
-                parts=[types.Part.from_text(text=f"""{full_prompt}""")],
+                parts=[types.Part.from_text(text=full_prompt)],
             )
         ]
 
@@ -108,41 +158,3 @@ Question: {userQuestion}
     except Exception as e:
         logging.error(f"Error in /chat: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# --- /transcribe Route ---
-@app.post("/transcribe/")
-async def transcribe_youtube(request: TranscribeRequest):
-    url = request.url.strip()
-    try:
-        logging.info(f"Downloading audio from: {url}")
-        yt = YouTube(f"https://www.youtube.com/watch?v={url}", "WEB")
-        stream = yt.streams.filter(only_audio=True).first()
-        if not stream:
-            raise HTTPException(status_code=404, detail="No audio stream found.")
-
-        filename = f"audio_{uuid.uuid4()}.mp4"
-        logging.info(f"Downloading stream to {filename}...")
-        stream.download(filename=filename)
-        logging.info("Download complete.")
-
-        logging.info("Starting transcription...")
-        result = whisper_model.transcribe(filename)
-        logging.info("Transcription done.")
-
-        os.remove(filename)
-        logging.info("Temp file removed.")
-
-        return {
-            "response": {
-                "title": yt.title,
-                "description": yt.description,
-                "video_content": result["text"],
-            }
-        }
-
-    except Exception as e:
-        logging.error(f"Error in /transcribe: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Error during transcription: {str(e)}"
-        )

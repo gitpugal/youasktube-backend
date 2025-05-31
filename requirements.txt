@@ -4,3 +4,4 @@ pytubefix
 git+https://github.com/openai/whisper.git
 pydantic
 google-genai
+yt_dlp
